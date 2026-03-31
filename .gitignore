@@ -1,0 +1,25 @@
+# Dependencies
+node_modules/
+frontend/node_modules/
+server/node_modules/
+
+# Build artifacts
+.next/
+frontend/.next/
+out/
+dist/
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Environment
+.env
+.env.*
+
+# OS/Editor
+.DS_Store
+Thumbs.db
+.vscode/
