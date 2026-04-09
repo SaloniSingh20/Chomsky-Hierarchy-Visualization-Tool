@@ -1,18 +1,95 @@
 # Chomsky Hierarchy Visualization Tool
 
-An interactive full-stack project to explore formal grammars and the Chomsky hierarchy with live classification, derivations, and automata visualizations.
+An interactive full-stack web application for learning formal languages and grammars through the Chomsky hierarchy. The app accepts grammar input, classifies it, and visualizes the resulting automata and derivations.
 
-## Features
+## What This Project Teaches
 
-- Classify grammars into Type 0, Type 1, Type 2, or Type 3
-- Generate and display:
+This project helps students understand how language classes relate to grammar restrictions and machine models.
+
+The hierarchy used is:
+
+Type 3 subset Type 2 subset Type 1 subset Type 0
+
+Each higher type is more expressive, but usually harder to analyze.
+
+## Formal Language and Grammar Basics
+
+A grammar is commonly written as G = (V, T, P, S):
+
+- V: non-terminals (variables such as S, A, B)
+- T: terminals (symbols such as a, b, 0, 1)
+- P: productions (rewrite rules)
+- S: start symbol
+
+Common notation accepted by this app:
+
+- Arrow forms: ->, =>, or ->
+- Alternatives with pipe: S->aS|b
+- Multiple rules separated by newline, comma, or semicolon
+- Epsilon supported as empty string token (for example e, eps, epsilon, or epsilon symbol)
+
+## Chomsky Types Covered
+
+### Type 3: Regular Grammar
+
+- Rule style: left-linear or right-linear (not mixed)
+- Typical form: A->aB or A->a or A->epsilon
+- Equivalent machine: Finite Automaton (NFA and DFA)
+
+### Type 2: Context-Free Grammar
+
+- Rule style: single non-terminal on left side
+- Typical form: A->alpha where A is one variable
+- Equivalent machine: Pushdown Automaton (PDA)
+
+### Type 1: Context-Sensitive Grammar
+
+- Rule style: non-shrinking productions (with standard epsilon exception)
+- Constraint idea: |lhs| <= |rhs| for most rules
+- Equivalent machine: Linear Bounded Automaton (LBA)
+
+### Type 0: Unrestricted Grammar
+
+- Most general production system
+- Equivalent machine: Turing Machine
+
+## What the Web App Does
+
+### Home / Landing
+
+- Introduces the tool and navigation to learning and simulation sections
+
+### Explore Page
+
+- Shows each hierarchy layer with readable explanations
+- Includes grammar form, automaton mapping, examples, and key notes
+- Helps beginners connect theory terms to practical patterns
+
+### Simulator Page
+
+- Accepts one grammar input
+- Classifies grammar type (Type 0 to Type 3)
+- Shows reasoning and violations when stricter conditions fail
+- Renders:
   - Parse tree
-  - NFA and DFA graphs
+  - NFA graph
+  - DFA graph
   - Transition tables
-  - Derivation steps
+  - Derivation paths
+  - Example strings
   - Closure properties
-- Explore educational hierarchy content by grammar type
-- Simulator page with one-input classification workflow
+
+### Compare Page
+
+- Supports side-by-side conceptual understanding of hierarchy levels
+
+## Automata Logic Implemented
+
+For regular grammars, the backend constructs automata and exposes them to the frontend renderer.
+
+- NFA construction includes epsilon transitions where required
+- DFA construction uses epsilon-closure and move over NFA state sets
+- DFA states are canonicalized set-representations to ensure deterministic transitions
 
 ## Tech Stack
 
@@ -21,12 +98,12 @@ An interactive full-stack project to explore formal grammars and the Chomsky hie
 
 ## Project Structure
 
-- `frontend/` - Next.js UI
-- `server/` - Express API and grammar/classifier services
+- frontend/: Next.js UI and visualization components
+- server/: Express routes, controllers, and grammar/classifier services
 
 ## Prerequisites
 
-- Node.js 18+ (recommended 20+)
+- Node.js 18 or higher (20+ recommended)
 - npm
 
 ## Local Setup
@@ -54,30 +131,28 @@ cd server
 node server.js
 ```
 
-### Start frontend (typically port 3000 or 3001)
+### Start frontend (port 3000, or 3001 if 3000 is busy)
 
 ```bash
 cd frontend
 npm run dev
 ```
 
-Open the simulator page at:
+Open:
 
-- `http://localhost:3000/simulator` or
-- `http://localhost:3001/simulator`
-
-(depending on which port is available)
+- http://localhost:3000/simulator
+- or http://localhost:3001/simulator
 
 ## API Endpoints
 
-Base URL: `http://localhost:4000/api`
+Base URL: http://localhost:4000/api
 
-- `GET /health`
-- `GET /hierarchy`
-- `GET /type/:id`
-- `GET /explore-content`
-- `POST /simulate`
-- `POST /classify`
+- GET /health
+- GET /hierarchy
+- GET /type/:id
+- GET /explore-content
+- POST /simulate
+- POST /classify
 
 ### Example classify request
 
@@ -87,7 +162,24 @@ Base URL: `http://localhost:4000/api`
 }
 ```
 
+### Example classify response fields (high level)
+
+- type, typeNumber, reason
+- checksPassed, violations
+- visualizations.parseTree
+- visualizations.nfa
+- visualizations.dfa
+- nfaTable, dfaTable
+- derivationSteps, exampleStrings
+
+## Input Tips
+
+- Keep non-terminals uppercase (S, A, B)
+- Keep terminals lowercase or digits (a, b, 0, 1)
+- Use compact grammar rules for best results
+- If server output looks stale, restart backend and refresh browser
+
 ## Notes
 
-- The frontend reads API base URL from `NEXT_PUBLIC_API_URL`; defaults to `http://localhost:4000/api`.
-- If tab/icon updates do not appear immediately, do a hard refresh to clear favicon cache.
+- Frontend API base is read from NEXT_PUBLIC_API_URL.
+- Default API target is http://localhost:4000/api.
