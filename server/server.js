@@ -3,7 +3,6 @@ const cors = require('cors')
 const hierarchyRoutes = require('./routes/hierarchyRoutes')
 
 const app = express()
-const PORT = process.env.PORT || 4000
 
 app.use(cors())
 app.use(express.json())
@@ -19,6 +18,6 @@ app.use((err, _req, res, _next) => {
   res.status(500).json({ error: 'Internal server error' })
 })
 
-app.listen(PORT, () => {
-  console.log(`Server listening on http://localhost:${PORT}`)
+app.listen(process.env.PORT || 5000, () => {
+  console.log(`Server listening on http://localhost:${process.env.PORT || 5000}`)
 })
