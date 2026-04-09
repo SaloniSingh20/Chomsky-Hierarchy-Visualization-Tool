@@ -183,3 +183,63 @@ Base URL: http://localhost:4000/api
 
 - Frontend API base is read from NEXT_PUBLIC_API_URL.
 - Default API target is http://localhost:4000/api.
+
+## Step-by-Step Deployment on Vercel
+
+This repository has two parts:
+
+- frontend app in frontend/ (Next.js)
+- backend API in server/ (Express)
+
+Vercel should deploy the frontend app. Backend can be hosted separately (Render, Railway, or another Node host), then connected using NEXT_PUBLIC_API_URL.
+
+### 1. Validate locally first
+
+Run from frontend folder:
+
+```bash
+cd frontend
+npm install
+npm run build
+```
+
+If this build fails locally, deployment will fail in Vercel.
+
+### 2. Prepare environment variables
+
+Use frontend/.env.example as template.
+
+In Vercel Project Settings, add:
+
+- NEXT_PUBLIC_API_URL = https://your-backend-domain.com/api
+
+Do not use localhost in production environment variables.
+
+### 3. Import project in Vercel
+
+- Click New Project
+- Import this GitHub repository
+- Set Root Directory to frontend
+- Framework Preset should be Next.js
+
+### 4. Verify build settings
+
+- Build Command: npm run build
+- Install Command: npm install
+- Output: .next (auto for Next.js)
+- Node version: read from frontend/package.json engines
+
+### 5. Deploy
+
+After deploy, open the Vercel URL and test Simulator page.
+
+### 6. If deployment fails, check logs directly
+
+Go to Vercel Deployments logs and match the exact error.
+
+Most common causes:
+
+- Missing NEXT_PUBLIC_API_URL
+- Wrong import case sensitivity (Linux is case-sensitive)
+- Building wrong folder instead of frontend
+- Backend URL still pointing to localhost
