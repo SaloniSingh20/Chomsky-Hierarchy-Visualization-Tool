@@ -1,100 +1,417 @@
 'use client'
 
-import { FormEvent, useEffect, useState } from 'react'
+import { FormEvent, useEffect, useMemo, useRef, useState } from 'react'
+import * as d3 from 'd3'
 import { motion } from 'framer-motion'
-import { CheckCircle2, HelpCircle, Play, Sparkles, XCircle } from 'lucide-react'
+import { Play, RefreshCcw } from 'lucide-react'
 import AppShell from '@/components/app-shell'
 import NeonButton from '@/components/neon-button'
 import LoadingSpinner from '@/components/loading-spinner'
-import { getHierarchy, simulateString } from '@/lib/api'
-import { HierarchyType, SimulationResult } from '@/lib/types'
-import { LEARNING_BY_TYPE } from '@/lib/learningContent'
+import { classifyGrammar } from '@/lib/api'
+import { ClassifyResult } from '@/lib/types'
 
-const PLACEHOLDER_BY_TYPE: Record<string, string> = {
-  type3: 'Try: 1101',
-  type2: 'Try: (()())',
-  type1: 'Try: aaabbbccc',
-  type0: 'Any string',
+type GraphData = {
+  states?: string[]
+  transitions?: Array<{ from: string; to: string; label: string }>
+  start?: string
+  accepting?: string[]
+  deadState?: string | null
+} | null
+
+function formatTypeLabel(type: string) {
+  return type.replace('(', ' - ').replace(')', '')
 }
 
-function buildSimpleSteps(type: string, input: string, accepted: boolean | 'unknown') {
-  if (type === 'type3') {
-    const lastTwo = input.slice(-2)
-    return [
-      "Step 1: Check if the string uses only 0 and 1.",
-      `Step 2: Check the last two characters. They are '${lastTwo || 'none'}'.`,
-      accepted === true
-        ? "Step 3: Last two are '01', so it follows the rule."
-        : "Step 3: Last two are not '01', so it breaks the rule.",
-    ]
-  }
+function TransitionTable({
+  title,
+  table,
+}: {
+  title: string
+  table?: { headers: string[]; rows: string[][] } | null
+}) {
+  if (!table) return null
 
-  if (type === 'type2') {
-    return [
-      "Step 1: Move left to right through the string.",
-      "Step 2: Push '(' and pop when ')' appears.",
-      accepted === true
-        ? 'Step 3: All opens are matched by closes, so it is valid.'
-        : 'Step 3: A bracket did not match correctly, so it is invalid.',
-    ]
-  }
+  return (
+    <div className="rounded-2xl border border-white/10 bg-slate-900/55 p-4">
+      <p className="text-xs uppercase tracking-[0.18em] text-slate-400">{title}</p>
+      <div className="mt-3 overflow-x-auto">
+        <table className="w-full text-left text-sm text-slate-200">
+          <thead className="text-xs uppercase tracking-[0.18em] text-slate-400">
+            <tr>
+              {table.headers.map((header) => (
+                <th key={header} className="px-2 py-2">{header}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {table.rows.map((row, rowIndex) => (
+              <tr key={`row-${rowIndex}`} className="border-t border-white/10">
+                {row.map((cell, cellIndex) => (
+                  <td key={`${rowIndex}-${cellIndex}`} className="px-2 py-2">{cell}</td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}
 
-  if (type === 'type1') {
-    return [
-      "Step 1: Check order is a...b...c...",
-      "Step 2: Count how many a, b, and c symbols exist.",
-      accepted === true
-        ? 'Step 3: Counts are equal, so it fits a^n b^n c^n.'
-        : 'Step 3: Counts or order are wrong, so it does not fit.',
-    ]
-  }
+function ForceGraph({
+  title,
+  graph,
+  animateString,
+}: {
+  title: string
+  graph: GraphData
+  animateString?: string
+}) {
+  const svgRef = useRef<SVGSVGElement | null>(null)
+  const resetRef = useRef<HTMLButtonElement | null>(null)
 
-  return [
-    'Step 1: Type 0 is very general.',
-    'Step 2: There is no short universal test for all cases.',
-    'Step 3: Result stays unknown in this teaching simulator.',
-  ]
+  useEffect(() => {
+    if (!svgRef.current || !graph?.states?.length) {
+      return
+    }
+
+    const width = 500
+    const height = 320
+
+    const svg = d3.select(svgRef.current)
+    svg.selectAll('*').remove()
+    svg.attr('viewBox', `0 0 ${width} ${height}`)
+
+    const markerId = `arrow-${title.replace(/\s+/g, '-')}`
+
+    const defs = svg.append('defs')
+    defs
+      .append('marker')
+      .attr('id', markerId)
+      .attr('viewBox', '0 -5 10 10')
+      .attr('refX', 20)
+      .attr('refY', 0)
+      .attr('markerWidth', 6)
+      .attr('markerHeight', 6)
+      .attr('orient', 'auto')
+      .append('path')
+      .attr('d', 'M0,-5L10,0L0,5')
+      .attr('fill', '#cbd5e1')
+
+    const g = svg.append('g')
+
+    const zoom = d3
+      .zoom<SVGSVGElement, unknown>()
+      .scaleExtent([0.5, 2.5])
+      .on('zoom', (event: d3.D3ZoomEvent<SVGSVGElement, unknown>) => {
+        g.attr('transform', event.transform.toString())
+      })
+
+    svg.call(zoom)
+
+    const nodes = graph.states.map((state) => ({ id: state }))
+    const displayLabelById = new Map(graph.states.map((state, index) => [state, `q${index}`]))
+    const links = (graph.transitions || []).map((t) => ({
+      source: t.from,
+      target: t.to,
+      from: t.from,
+      to: t.to,
+      label: t.label,
+    }))
+
+    const simulation = d3
+      .forceSimulation(nodes as d3.SimulationNodeDatum[])
+      .force(
+        'link',
+        d3
+          .forceLink(links as unknown as d3.SimulationLinkDatum<d3.SimulationNodeDatum>[])
+          .id((d: d3.SimulationNodeDatum) => (d as { id: string }).id)
+          .distance(120)
+      )
+      .force('charge', d3.forceManyBody().strength(-400))
+      .force('center', d3.forceCenter(width / 2, height / 2))
+
+    const normalLinks = links.filter((l) => l.from !== l.to)
+    const selfLoops = links.filter((l) => l.from === l.to)
+
+    const linkGroup = g
+      .append('g')
+      .selectAll('line')
+      .data(normalLinks)
+      .join('line')
+      .attr('stroke', '#e2e8f0')
+      .attr('stroke-opacity', 0.75)
+      .attr('stroke-width', 1.4)
+      .attr('marker-end', `url(#${markerId})`)
+
+    const linkLabels = g
+      .append('g')
+      .selectAll('text')
+      .data(normalLinks)
+      .join('text')
+      .attr('fill', '#f8fafc')
+      .attr('font-size', 11)
+      .text((d: { label: string }) => d.label)
+
+    const selfLoopPaths = g
+      .append('g')
+      .selectAll('path')
+      .data(selfLoops)
+      .join('path')
+      .attr('fill', 'none')
+      .attr('stroke', '#e2e8f0')
+      .attr('stroke-width', 1.4)
+      .attr('marker-end', `url(#${markerId})`)
+
+    const selfLoopLabels = g
+      .append('g')
+      .selectAll('text')
+      .data(selfLoops)
+      .join('text')
+      .attr('fill', '#f8fafc')
+      .attr('font-size', 11)
+      .text((d: { label: string }) => d.label)
+
+    const nodeGroup = g
+      .append('g')
+      .selectAll('g')
+      .data(nodes)
+      .join('g')
+      .attr('class', (d: { id: string }) => `node-${d.id.replace(/[^a-zA-Z0-9_]/g, '_')}`)
+
+    nodeGroup
+      .append('circle')
+      .attr('r', 18)
+      .attr('fill', (d: { id: string }) => {
+        const id = d.id
+        if (id === 'dead' || id.includes('∅')) return '#334155'
+        if ((graph.accepting || []).includes(id)) return '#0f172a'
+        return '#10243a'
+      })
+      .attr('stroke', (d: { id: string }) => {
+        const id = d.id
+        if (id === graph.start) return '#f472b6'
+        if (id === 'dead' || id.includes('∅')) return '#94a3b8'
+        return '#22d3ee'
+      })
+      .attr('stroke-dasharray', (d: { id: string }) => {
+        const id = d.id
+        return id === 'dead' || id.includes('∅') ? '4,3' : '0'
+      })
+      .attr('stroke-width', 2)
+
+    nodeGroup
+      .filter((d: { id: string }) => (graph.accepting || []).includes(d.id))
+      .append('circle')
+      .attr('r', 14)
+      .attr('fill', 'none')
+      .attr('stroke', '#a78bfa')
+      .attr('stroke-width', 1.5)
+
+    nodeGroup
+      .append('text')
+      .attr('text-anchor', 'middle')
+      .attr('dy', 4)
+      .attr('fill', '#f8fafc')
+      .attr('font-size', 10)
+      .text((d: { id: string }) => displayLabelById.get(d.id) || d.id)
+
+    simulation.on('tick', () => {
+      linkGroup
+        .attr('x1', (d: any) => ((d.source as { x: number }).x))
+        .attr('y1', (d: any) => ((d.source as { y: number }).y))
+        .attr('x2', (d: any) => ((d.target as { x: number }).x))
+        .attr('y2', (d: any) => ((d.target as { y: number }).y))
+
+      linkLabels
+        .attr('x', (d: any) => (((d.source as { x: number }).x + (d.target as { x: number }).x) / 2))
+        .attr('y', (d: any) => (((d.source as { y: number }).y + (d.target as { y: number }).y) / 2) - 4)
+
+      selfLoopPaths.attr('d', (d: { from: string }) => {
+        const n = nodes.find((node) => (node as { id: string }).id === d.from) as { x: number; y: number } | undefined
+        if (!n) return ''
+        return `M ${n.x},${n.y} C ${n.x - 30},${n.y - 60} ${n.x + 30},${n.y - 60} ${n.x},${n.y}`
+      })
+
+      selfLoopLabels
+        .attr('x', (d: { from: string }) => {
+          const n = nodes.find((node) => (node as { id: string }).id === d.from) as { x: number; y: number } | undefined
+          return n ? n.x : 0
+        })
+        .attr('y', (d: { from: string }) => {
+          const n = nodes.find((node) => (node as { id: string }).id === d.from) as { x: number; y: number } | undefined
+          return n ? n.y - 58 : 0
+        })
+
+      nodeGroup.attr('transform', (d: any) => `translate(${(d as { x: number }).x}, ${(d as { y: number }).y})`)
+    })
+
+    if (animateString && graph.start) {
+      const pathStates: string[] = [graph.start]
+      let currentState = graph.start
+
+      animateString.split('').forEach((symbol) => {
+        const next = (graph.transitions || []).find((t) => t.from === currentState && t.label === symbol)
+        if (next) {
+          currentState = next.to
+          pathStates.push(currentState)
+        }
+      })
+
+      pathStates.forEach((state, index) => {
+        setTimeout(() => {
+          g.selectAll('g[class^="node-"] circle').attr('fill-opacity', 1)
+          const cls = `.node-${state.replace(/[^a-zA-Z0-9_]/g, '_')} circle`
+          g.selectAll(cls).attr('fill', '#0ea5e9').attr('fill-opacity', 0.95)
+        }, 700 * (index + 1))
+      })
+    }
+
+    if (resetRef.current) {
+      d3.select(resetRef.current).on('click', () => {
+        svg
+          .transition()
+          .duration(400)
+          .call(zoom.transform, d3.zoomIdentity)
+      })
+    }
+
+    return () => {
+      simulation.stop()
+      if (resetRef.current) {
+        d3.select(resetRef.current).on('click', null)
+      }
+    }
+  }, [graph, title, animateString])
+
+  if (!graph?.states?.length) return null
+
+  return (
+    <div className="rounded-2xl border border-white/10 bg-slate-900/55 p-4">
+      <div className="flex items-center justify-between">
+        <p className="text-xs uppercase tracking-[0.18em] text-slate-400">{title}</p>
+        <button ref={resetRef} type="button" className="inline-flex items-center gap-1 rounded-md border border-white/15 px-2 py-1 text-xs text-slate-200">
+          <RefreshCcw className="h-3.5 w-3.5" />
+          Reset View
+        </button>
+      </div>
+      <svg ref={svgRef} className="mt-3 h-[300px] w-full min-w-[400px]" />
+    </div>
+  )
+}
+
+function ParseTreeD3({
+  parseTreeData,
+}: {
+  parseTreeData?: {
+    forString: string
+    tree: { name: string; children?: Array<Record<string, unknown>> }
+  }
+}) {
+  const svgRef = useRef<SVGSVGElement | null>(null)
+  const resetRef = useRef<HTMLButtonElement | null>(null)
+
+  useEffect(() => {
+    if (!svgRef.current || !parseTreeData?.tree) return
+
+    const width = 520
+    const height = 320
+    const svg = d3.select(svgRef.current)
+    svg.selectAll('*').remove()
+    svg.attr('viewBox', `0 0 ${width} ${height}`)
+
+    const g = svg.append('g').attr('transform', 'translate(40,40)')
+
+    const root = d3.hierarchy(parseTreeData.tree as unknown as { name: string; children?: Array<{ name: string }> })
+    const treeLayout = d3.tree<typeof root.data>().nodeSize([60, 120])
+    const tree = treeLayout(root)
+
+    const zoom = d3
+      .zoom<SVGSVGElement, unknown>()
+      .scaleExtent([0.5, 2.5])
+      .on('zoom', (event: d3.D3ZoomEvent<SVGSVGElement, unknown>) => {
+        g.attr('transform', event.transform.toString())
+      })
+
+    svg.call(zoom)
+
+    g.selectAll('line')
+      .data(tree.links())
+      .join('line')
+      .attr('x1', (d: d3.HierarchyPointLink<{ name: string }>) => d.source.y)
+      .attr('y1', (d: d3.HierarchyPointLink<{ name: string }>) => d.source.x)
+      .attr('x2', (d: d3.HierarchyPointLink<{ name: string }>) => d.target.y)
+      .attr('y2', (d: d3.HierarchyPointLink<{ name: string }>) => d.target.x)
+      .attr('stroke', '#e2e8f0')
+
+    const node = g
+      .selectAll('g')
+      .data(tree.descendants())
+      .join('g')
+      .attr('transform', (d: d3.HierarchyPointNode<{ name: string }>) => `translate(${d.y},${d.x})`)
+
+    node
+      .append('circle')
+      .attr('r', 14)
+      .attr('fill', (d: d3.HierarchyPointNode<{ name: string }>) => (/^[A-Z]$/.test(d.data.name) ? '#0f766e' : '#be185d'))
+      .attr('stroke', '#f8fafc')
+      .attr('stroke-width', 1.4)
+
+    node
+      .append('text')
+      .text((d: d3.HierarchyPointNode<{ name: string }>) => d.data.name)
+      .attr('text-anchor', 'middle')
+      .attr('dy', 4)
+      .attr('fill', '#f8fafc')
+      .attr('font-size', 10)
+
+    if (resetRef.current) {
+      d3.select(resetRef.current).on('click', () => {
+        svg
+          .transition()
+          .duration(400)
+          .call(zoom.transform, d3.zoomIdentity)
+      })
+    }
+  }, [parseTreeData])
+
+  if (!parseTreeData?.tree) return null
+
+  return (
+    <div className="rounded-2xl border border-white/10 bg-slate-900/55 p-4">
+      <div className="flex items-center justify-between">
+        <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Parse Tree for '{parseTreeData.forString}'</p>
+        <button ref={resetRef} type="button" className="inline-flex items-center gap-1 rounded-md border border-white/15 px-2 py-1 text-xs text-slate-200">
+          <RefreshCcw className="h-3.5 w-3.5" />
+          Reset View
+        </button>
+      </div>
+      <svg ref={svgRef} className="mt-3 h-[300px] w-full min-w-[400px]" />
+    </div>
+  )
 }
 
 export default function SimulatorPage() {
-  const [types, setTypes] = useState<HierarchyType[]>([])
-  const [selectedType, setSelectedType] = useState('type3')
-  const [input, setInput] = useState('1101')
-  const [result, setResult] = useState<SimulationResult | null>(null)
+  const [input, setInput] = useState('S->aS|b')
+  const [result, setResult] = useState<ClassifyResult | null>(null)
   const [loading, setLoading] = useState(false)
-  const [initialLoading, setInitialLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
-  const teaching = LEARNING_BY_TYPE[selectedType as HierarchyType['id']]
-
-  useEffect(() => {
-    async function fetchTypes() {
-      try {
-        setInitialLoading(true)
-        const data = await getHierarchy()
-        setTypes(data)
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to load hierarchy')
-      } finally {
-        setInitialLoading(false)
-      }
-    }
-
-    fetchTypes()
-  }, [])
+  const typeHeading = useMemo(() => {
+    if (!result) return ''
+    return formatTypeLabel(result.type)
+  }, [result])
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault()
     try {
       setLoading(true)
       setError(null)
-      const data = await simulateString({
-        type: selectedType,
-        string: input,
-      })
+      const data = await classifyGrammar(input)
       setResult(data)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Simulation failed')
+      setError(err instanceof Error ? err.message : 'Classification failed')
+      setResult(null)
     } finally {
       setLoading(false)
     }
@@ -102,151 +419,148 @@ export default function SimulatorPage() {
 
   return (
     <AppShell
-      title="String Simulator"
-      subtitle="Pick a type, test a string, and learn why it passes or fails in simple words."
+      title="Grammar & Language Classifier"
+      subtitle="Enter language/grammar once, then inspect complete type analysis and visualizations."
     >
-      <div className="grid gap-8 lg:grid-cols-[1fr_1fr]">
-        <motion.section
-          initial={{ opacity: 0, x: -20 }}
-          animate={{ opacity: 1, x: 0 }}
-          className="glass-panel rounded-3xl p-8"
-        >
-          <h2 className="text-xl font-semibold text-white">Run Simulation</h2>
-          <div className="mt-4 rounded-2xl border border-cyan-300/25 bg-cyan-300/10 p-4">
-            <p className="text-xs uppercase tracking-[0.18em] text-cyan-200">In simple words</p>
-            <p className="mt-2 text-cyan-100">{teaching.inSimpleWords}</p>
-          </div>
-          {initialLoading ? (
-            <div className="mt-6">
-              <LoadingSpinner label="Loading language types..." />
-            </div>
-          ) : (
-            <form onSubmit={handleSubmit} className="mt-6 space-y-6">
-              <div>
-                <label htmlFor="type" className="mb-2 block text-sm text-slate-300">
-                  Grammar Type
-                </label>
-                <select
-                  id="type"
-                  value={selectedType}
-                  onChange={(e) => setSelectedType(e.target.value)}
-                  className="w-full rounded-2xl border border-cyan-300/30 bg-slate-950/70 px-4 py-3 text-slate-100 outline-none ring-cyan-300/40 transition focus:ring"
-                >
-                  {types.map((item) => (
-                    <option key={item.id} value={item.id}>
-                      {item.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label htmlFor="input" className="mb-2 block text-sm text-slate-300">
-                  Input String
-                </label>
-                <input
-                  id="input"
-                  value={input}
-                  onChange={(e) => setInput(e.target.value)}
-                  placeholder={PLACEHOLDER_BY_TYPE[selectedType]}
-                  className="w-full rounded-2xl border border-cyan-300/30 bg-slate-950/70 px-4 py-3 text-slate-100 outline-none ring-cyan-300/40 transition focus:ring"
-                />
-              </div>
-
-              <div className="rounded-2xl border border-white/10 bg-slate-900/55 p-4">
-                <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Rule used</p>
-                <p className="mt-2 text-slate-100">{teaching.rule}</p>
-                <p className="mt-2 flex items-center gap-2 text-xs text-slate-300">
-                  <HelpCircle className="h-3.5 w-3.5 text-cyan-300" />
-                  Machine (model used to check strings): {teaching.machineHint}
-                </p>
-              </div>
-
-              <NeonButton type="submit" className="w-full justify-center rounded-2xl" disabled={loading}>
-                <Play className="h-4 w-4" />
-                {loading ? 'Testing...' : 'Test String'}
-              </NeonButton>
-            </form>
-          )}
-          {error && <p className="mt-4 text-sm text-rose-300">{error}</p>}
-        </motion.section>
-
-        <motion.section
-          initial={{ opacity: 0, x: 20 }}
-          animate={{ opacity: 1, x: 0 }}
-          className="glass-panel rounded-3xl p-8"
-        >
-          <h2 className="text-xl font-semibold text-white">Simulation Result</h2>
-          {!result ? (
-            <p className="mt-5 text-slate-300">Run a test to see Accepted/Rejected status, steps, and explanation.</p>
-          ) : (
-            <div className="mt-5 space-y-6">
-              <div className="rounded-2xl border border-white/10 bg-slate-900/55 p-4">
-                <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Status</p>
-                <div className="mt-2 inline-flex items-center gap-2 text-lg font-semibold">
-                  {result.accepted === true && (
-                    <>
-                      <CheckCircle2 className="h-5 w-5 text-emerald-300" />
-                      <span className="text-emerald-300">Accepted</span>
-                    </>
-                  )}
-                  {result.accepted === false && (
-                    <>
-                      <XCircle className="h-5 w-5 text-rose-300" />
-                      <span className="text-rose-300">Rejected</span>
-                    </>
-                  )}
-                  {result.accepted === 'unknown' && <span className="text-amber-300">Unknown</span>}
-                </div>
-              </div>
-
-              <div className="rounded-2xl border border-cyan-300/25 bg-cyan-300/10 p-4">
-                <p className="flex items-center gap-2 text-xs uppercase tracking-[0.18em] text-cyan-200">
-                  <Sparkles className="h-3.5 w-3.5" />
-                  Why this result?
-                </p>
-                <p className="mt-2 text-cyan-100">
-                  {result.accepted === true && `This string is accepted because it follows the rule: ${teaching.rule}`}
-                  {result.accepted === false && `This string is rejected because it breaks the rule: ${teaching.rule}`}
-                  {result.accepted === 'unknown' && 'This result is unknown because Type 0 needs a general Turing-machine level check.'}
-                </p>
-              </div>
-
-              <div className="rounded-2xl border border-white/10 bg-slate-900/55 p-4">
-                <p className="text-xs uppercase tracking-[0.18em] text-slate-400">How it works (simple steps)</p>
-                <ul className="mt-3 space-y-2 text-sm text-slate-200">
-                  {buildSimpleSteps(selectedType, input, result.accepted).map((step) => (
-                    <li key={step} className="rounded-lg bg-white/5 px-3 py-2">
-                      {step}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-
-              <div className="rounded-2xl border border-white/10 bg-slate-900/55 p-4">
-                <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Backend steps</p>
-                <ul className="mt-3 space-y-2 text-sm text-slate-200">
-                  {result.steps.map((step) => (
-                    <li key={step} className="rounded-lg bg-white/5 px-3 py-2">
-                      {step}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-
-              <div className="rounded-2xl border border-white/10 bg-slate-900/55 p-4">
-                <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Explanation</p>
-                <p className="mt-2 text-slate-200">{result.reason}</p>
-              </div>
-            </div>
-          )}
-        </motion.section>
-      </div>
-      {loading && (
-        <div className="mt-6">
-          <LoadingSpinner label="Running simulation..." />
+      <form onSubmit={handleSubmit} className="glass-panel rounded-3xl p-8">
+        <p className="text-sm uppercase tracking-[0.18em] text-cyan-200">enter language/ grammar to know its type</p>
+        <input
+          value={input}
+          onChange={(event) => setInput(event.target.value)}
+          placeholder="Examples: S->aS|b, S->aSb|ab, a^n b^n"
+          className="mt-4 w-full rounded-2xl border border-cyan-300/30 bg-slate-950/70 px-4 py-4 text-slate-100 outline-none ring-cyan-300/40 transition focus:ring"
+        />
+        <div className="mt-5">
+          <NeonButton type="submit" className="w-full justify-center rounded-2xl" disabled={loading}>
+            <Play className="h-4 w-4" />
+            {loading ? 'Analyzing...' : 'Know Type'}
+          </NeonButton>
         </div>
-      )}
+        {error ? <p className="mt-4 text-sm text-rose-300">{error}</p> : null}
+      </form>
+
+      {loading ? (
+        <div className="mt-8 glass-panel rounded-3xl p-10">
+          <LoadingSpinner label="Classifying and generating visualization data..." />
+        </div>
+      ) : null}
+
+      {result ? (
+        <motion.section initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="mt-8 space-y-6">
+          <div className="glass-panel rounded-3xl p-8">
+            <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Classification</p>
+            <h2 className="mt-2 text-3xl font-bold text-cyan-200">{typeHeading}</h2>
+            <p className="mt-3 text-slate-200">{result.reason}</p>
+            {result.interpretationNote ? <p className="mt-2 text-sm text-cyan-100">{result.interpretationNote}</p> : null}
+          </div>
+
+          <div className="grid gap-6 lg:grid-cols-2">
+            <div className="rounded-2xl border border-white/10 bg-slate-900/55 p-4">
+              <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Language Description</p>
+              <p className="mt-2 text-slate-100">{result.languageDescription}</p>
+              {result.regexEquivalent ? (
+                <div className="mt-3 inline-flex rounded-full border border-cyan-300/40 bg-cyan-300/10 px-3 py-1 text-sm text-cyan-100">
+                  Equivalent Regex: {result.regexEquivalent}
+                </div>
+              ) : null}
+            </div>
+
+            <div className="rounded-2xl border border-white/10 bg-slate-900/55 p-4">
+              <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Closure Properties</p>
+              <ul className="mt-3 space-y-2 text-sm text-slate-200">
+                <li className="rounded-lg bg-white/5 px-3 py-2">Union: {result.closureProperties?.union ? '✓' : '✗'}</li>
+                <li className="rounded-lg bg-white/5 px-3 py-2">Intersection: {result.closureProperties?.intersection ? '✓' : '✗'}</li>
+                <li className="rounded-lg bg-white/5 px-3 py-2">Complement: {result.closureProperties?.complement ? '✓' : '✗'}</li>
+                <li className="rounded-lg bg-white/5 px-3 py-2">Concatenation: {result.closureProperties?.concatenation ? '✓' : '✗'}</li>
+                <li className="rounded-lg bg-white/5 px-3 py-2">Kleene star: {result.closureProperties?.kleeneStar ? '✓' : '✗'}</li>
+              </ul>
+            </div>
+          </div>
+
+          <ForceGraph title="NFA Graph" graph={result.visualizations.nfa as GraphData} animateString={result.exampleStrings?.[0]} />
+          <TransitionTable title="NFA Transition Table" table={result.nfaTable} />
+
+          <ForceGraph title="DFA Graph" graph={result.visualizations.dfa as GraphData} />
+          <TransitionTable title="DFA Transition Table" table={result.dfaTable} />
+
+          <ParseTreeD3 parseTreeData={result.parseTreeData} />
+
+          {result.pdaTransitions?.length ? (
+            <div className="rounded-2xl border border-white/10 bg-slate-900/55 p-4">
+              <p className="text-xs uppercase tracking-[0.18em] text-slate-400">PDA Transitions</p>
+              <ul className="mt-3 space-y-2 text-sm text-slate-200">
+                {result.pdaTransitions.map((row) => (
+                  <li key={`${row.from}-${row.to}-${row.label}`} className="rounded-lg bg-white/5 px-3 py-2">
+                    {row.from} {'->'} {row.to} : {row.label}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+
+          {result.lbaSteps?.length ? (
+            <div className="rounded-2xl border border-white/10 bg-slate-900/55 p-4">
+              <p className="text-xs uppercase tracking-[0.18em] text-slate-400">LBA Steps</p>
+              <ul className="mt-3 space-y-2 text-sm text-slate-200">
+                {result.lbaSteps.map((step, index) => (
+                  <li key={`${step.state}-${index}`} className="rounded-lg bg-white/5 px-3 py-2">
+                    {step.state}: {step.tape} (head={step.head}) - {step.action}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+
+          {result.tmTransitions?.length ? (
+            <div className="rounded-2xl border border-white/10 bg-slate-900/55 p-4">
+              <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Turing Machine Transition Table</p>
+              <div className="mt-3 overflow-x-auto">
+                <table className="w-full text-left text-sm text-slate-200">
+                  <thead className="text-xs uppercase tracking-[0.18em] text-slate-400">
+                    <tr>
+                      <th className="px-2 py-2">State</th>
+                      <th className="px-2 py-2">Read</th>
+                      <th className="px-2 py-2">Write</th>
+                      <th className="px-2 py-2">Move</th>
+                      <th className="px-2 py-2">Next</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {result.tmTransitions.map((row, index) => (
+                      <tr key={`${row.state}-${index}`} className="border-t border-white/10">
+                        <td className="px-2 py-2">{row.state}</td>
+                        <td className="px-2 py-2">{row.read}</td>
+                        <td className="px-2 py-2">{row.write}</td>
+                        <td className="px-2 py-2">{row.move}</td>
+                        <td className="px-2 py-2">{row.nextState}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ) : null}
+
+          <div className="grid gap-6 lg:grid-cols-2">
+            <div className="rounded-2xl border border-white/10 bg-slate-900/55 p-4">
+              <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Derivation Paths (depth 5)</p>
+              <ul className="mt-3 space-y-2 text-sm text-slate-200">
+                {result.derivationSteps.map((step) => (
+                  <li key={step} className="rounded-lg bg-white/5 px-3 py-2" dangerouslySetInnerHTML={{ __html: step.replace(/\*\*(.*?)\*\*/g, '<span style="color:#22d3ee;font-weight:700;">$1</span>') }} />
+                ))}
+              </ul>
+            </div>
+            <div className="rounded-2xl border border-white/10 bg-slate-900/55 p-4">
+              <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Example Strings</p>
+              <ul className="mt-3 space-y-2 text-sm text-slate-200">
+                {result.exampleStrings.map((sample) => (
+                  <li key={sample} className="rounded-lg bg-white/5 px-3 py-2">{sample}</li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        </motion.section>
+      ) : null}
     </AppShell>
   )
 }

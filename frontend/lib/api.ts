@@ -1,4 +1,9 @@
-import { HierarchyType, SimulationResult } from '@/lib/types'
+import {
+  ClassifyResult,
+  ExploreContent,
+  HierarchyType,
+  SimulationResult,
+} from '@/lib/types'
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/api'
 
@@ -42,4 +47,15 @@ export function simulateString(payload: {
     method: 'POST',
     body: JSON.stringify(payload),
   })
+}
+
+export function classifyGrammar(grammar: string): Promise<ClassifyResult> {
+  return request<ClassifyResult>('/classify', {
+    method: 'POST',
+    body: JSON.stringify({ grammar }),
+  })
+}
+
+export function getExploreContent(): Promise<ExploreContent> {
+  return request<ExploreContent>('/explore-content')
 }

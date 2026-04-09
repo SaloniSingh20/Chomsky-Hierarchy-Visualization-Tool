@@ -5,8 +5,8 @@ import { motion } from 'framer-motion'
 import { HelpCircle, Layers, Lightbulb, MemoryStick, Sparkles } from 'lucide-react'
 import AppShell from '@/components/app-shell'
 import LoadingSpinner from '@/components/loading-spinner'
-import { getHierarchy, getHierarchyType } from '@/lib/api'
-import { HierarchyType } from '@/lib/types'
+import { getExploreContent, getHierarchy, getHierarchyType } from '@/lib/api'
+import { ExploreContent, HierarchyType } from '@/lib/types'
 import { LEARNING_BY_TYPE } from '@/lib/learningContent'
 
 const layerColors: Record<string, string> = {
@@ -27,6 +27,7 @@ export default function ExplorePage() {
   const [types, setTypes] = useState<HierarchyType[]>([])
   const [selectedId, setSelectedId] = useState<string>('type3')
   const [selectedType, setSelectedType] = useState<HierarchyType | null>(null)
+  const [exploreContent, setExploreContent] = useState<ExploreContent | null>(null)
   const [loading, setLoading] = useState(true)
   const [detailsLoading, setDetailsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -36,8 +37,12 @@ export default function ExplorePage() {
       try {
         setLoading(true)
         setError(null)
-        const data = await getHierarchy()
-        setTypes(data)
+        const [hierarchyData, exploreData] = await Promise.all([
+          getHierarchy(),
+          getExploreContent(),
+        ])
+        setTypes(hierarchyData)
+        setExploreContent(exploreData)
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to load hierarchy')
       } finally {
@@ -73,11 +78,17 @@ export default function ExplorePage() {
   }, [types])
 
   const learning = selectedType ? LEARNING_BY_TYPE[selectedType.id] : null
+  const backendSection = selectedType
+    ? exploreContent?.sections.find((section) => section.id === selectedType.id)
+    : null
 
   return (
     <AppShell
-      title="Explore the Hierarchy"
-      subtitle="Click a layer to learn each type in plain English, with examples and friendly intuition."
+      title={exploreContent?.overview.title || 'Explore the Hierarchy'}
+      subtitle={
+        exploreContent?.overview.summary
+        || 'Click a layer to learn each type in plain English, with examples and friendly intuition.'
+      }
     >
       {loading ? (
         <div className="glass-panel rounded-3xl p-10">
@@ -169,16 +180,25 @@ export default function ExplorePage() {
                 <h2 className="text-2xl font-bold text-white">{selectedType.name}</h2>
                 <p className="text-slate-300">{selectedType.description}</p>
 
+                {backendSection && (
+                  <div className="rounded-2xl border border-cyan-300/30 bg-cyan-300/10 p-4">
+                    <p className="text-xs uppercase tracking-[0.18em] text-cyan-200">Also called</p>
+                    <p className="mt-2 text-cyan-100">{backendSection.aka}</p>
+                  </div>
+                )}
+
                 <div className="rounded-2xl border border-white/10 bg-slate-900/50 p-4">
                   <p className="text-xs uppercase tracking-[0.18em] text-slate-400">What is this?</p>
-                  <p className="mt-2 text-slate-100">{learning?.simpleDefinition}</p>
+                  <p className="mt-2 text-slate-100">{learning?.simpleDefinition || backendSection?.keyProperty}</p>
                 </div>
 
                 <div className="grid gap-4 sm:grid-cols-2">
                   <div className="rounded-2xl border border-white/10 bg-slate-900/50 p-4">
                     <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Grammar</p>
                     <p className="mt-2 font-medium text-cyan-200">{selectedType.grammar}</p>
-                    <p className="mt-2 text-xs text-slate-300">This is the rule style used to build valid strings.</p>
+                    <p className="mt-2 text-xs text-slate-300">
+                      {backendSection?.productionForm || 'This is the rule style used to build valid strings.'}
+                    </p>
                   </div>
                   <div className="rounded-2xl border border-white/10 bg-slate-900/50 p-4">
                     <p className="flex items-center gap-2 text-xs uppercase tracking-[0.18em] text-slate-400">
@@ -188,6 +208,9 @@ export default function ExplorePage() {
                       </span>
                     </p>
                     <p className="mt-2 font-medium text-cyan-200">{selectedType.automaton}</p>
+                    {backendSection?.formal && (
+                      <p className="mt-2 text-xs text-slate-300">Formal form: {backendSection.formal}</p>
+                    )}
                   </div>
                 </div>
 
@@ -198,7 +221,7 @@ export default function ExplorePage() {
                   </div>
                   <div className="rounded-2xl border border-white/10 bg-slate-900/50 p-4">
                     <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Why it matters</p>
-                    <p className="mt-2 text-slate-100">{learning?.whyItMatters}</p>
+                    <p className="mt-2 text-slate-100">{learning?.whyItMatters || backendSection?.language}</p>
                   </div>
                 </div>
 
@@ -227,10 +250,23 @@ export default function ExplorePage() {
                   <p className="mt-2 text-cyan-100">{learning?.inSimpleWords}</p>
                 </div>
 
+                {backendSection?.notes?.length ? (
+                  <div className="rounded-2xl border border-white/10 bg-slate-900/50 p-4">
+                    <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Important notes</p>
+                    <ul className="mt-3 space-y-2 text-slate-200">
+                      {backendSection.notes.map((note) => (
+                        <li key={note} className="rounded-lg bg-white/5 px-3 py-2">
+                          {note}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
+
                 <div className="rounded-2xl border border-white/10 bg-slate-900/50 p-4">
                   <p className="text-xs uppercase tracking-[0.18em] text-slate-400">How it works (examples from API)</p>
                   <ul className="mt-3 space-y-2 text-slate-200">
-                    {selectedType.examples.map((example) => (
+                    {(backendSection?.examples?.length ? backendSection.examples : selectedType.examples).map((example) => (
                       <li key={example} className="rounded-lg bg-white/5 px-3 py-2">
                         {example}
                       </li>
