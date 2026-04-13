@@ -94,12 +94,13 @@ For regular grammars, the backend constructs automata and exposes them to the fr
 ## Tech Stack
 
 - Frontend: Next.js (App Router), React, TypeScript, Tailwind CSS, D3
-- Backend: Node.js, Express
+- Backend: Node.js logic exposed through Vercel Serverless Functions
 
 ## Project Structure
 
+- api/: Vercel serverless API routes
 - frontend/: Next.js UI and visualization components
-- server/: Express routes, controllers, and grammar/classifier services
+- server/: backend controllers/services source logic used by API routes
 
 ## Prerequisites
 
@@ -124,14 +125,14 @@ npm install
 
 ## Run Locally
 
-### Start backend (port 4000)
+### Start project (frontend + API in one app)
 
 ```bash
-cd server
-node server.js
+cd ..
+npm run dev
 ```
 
-### Start frontend (port 3000, or 3001 if 3000 is busy)
+### Alternative frontend-only dev mode
 
 ```bash
 cd frontend
@@ -145,7 +146,7 @@ Open:
 
 ## API Endpoints
 
-Base URL: http://localhost:4000/api
+Base URL: /api (same origin)
 
 - GET /health
 - GET /hierarchy
@@ -182,16 +183,15 @@ Base URL: http://localhost:4000/api
 ## Notes
 
 - Frontend API base is read from NEXT_PUBLIC_API_URL.
-- Default API target is http://localhost:4000/api.
+- Default API target is /api.
 
 ## Step-by-Step Deployment on Vercel
 
-This repository has two parts:
+This repository deploys as a single Vercel project:
 
 - frontend app in frontend/ (Next.js)
-- backend API in server/ (Express)
-
-Vercel should deploy the frontend app. Backend can be hosted separately (Render, Railway, or another Node host), then connected using NEXT_PUBLIC_API_URL.
+- backend API in api/ (Vercel serverless functions)
+- backend logic reused from server/services and server/controllers
 
 ### 1. Validate locally first
 
@@ -211,7 +211,7 @@ Use frontend/.env.example as template.
 
 In Vercel Project Settings, add:
 
-- NEXT_PUBLIC_API_URL = https://your-backend-domain.com/api
+- NEXT_PUBLIC_API_URL = /api (optional, default already points to /api)
 
 Do not use localhost in production environment variables.
 
@@ -219,8 +219,8 @@ Do not use localhost in production environment variables.
 
 - Click New Project
 - Import this GitHub repository
-- Set Root Directory to frontend
-- Framework Preset should be Next.js
+- Keep Root Directory as repository root
+- Framework Preset should be Next.js (auto-detected)
 
 ### 4. Verify build settings
 
@@ -239,7 +239,6 @@ Go to Vercel Deployments logs and match the exact error.
 
 Most common causes:
 
-- Missing NEXT_PUBLIC_API_URL
+- Wrong root directory selected in Vercel project settings
 - Wrong import case sensitivity (Linux is case-sensitive)
-- Building wrong folder instead of frontend
-- Backend URL still pointing to localhost
+- Backend URL still pointing to localhost in custom env values

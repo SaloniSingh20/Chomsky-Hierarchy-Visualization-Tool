@@ -1,0 +1,16 @@
+{
+  "name": "chomsky-hierarchy-vercel",
+  "private": true,
+  "version": "1.0.0",
+  "engines": {
+    "node": "18.x"
+  },
+  "scripts": {
+    "dev": "next dev frontend",
+    "build": "next build frontend",
+    "start": "next start frontend"
+  },
+  "workspaces": [
+    "frontend"
+  ]
+}
